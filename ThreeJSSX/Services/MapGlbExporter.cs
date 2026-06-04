@@ -205,7 +205,7 @@ public class MapGlbExporter
             .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(1, 1, 1, 1));
         if (texCache.TryGetValue(texRid, out var texPath))
         {
-            try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); ApplyAlphaModeFromTexture(mat, texPath); }
+            try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); }
             catch { _logger.LogWarning("  Failed to apply texture {Path}", texPath); }
         }
         cache[texRid] = mat;
@@ -309,7 +309,8 @@ public class MapGlbExporter
         try
         {
             mat.WithChannelImage(KnownChannel.BaseColor, texPath);
-            ApplyAlphaModeFromTexture(mat, texPath);
+            // Skip alpha-mode classification on instances for now — alpha-cutout is producing
+            // eroded foliage. Render trees/signs/rails fully opaque until we revisit transparency.
             return mat;
         }
         catch { _logger.LogWarning("  Failed to apply prefab texture {Path}", texPath); return fallback; }
@@ -392,7 +393,9 @@ public class MapGlbExporter
     private static void ApplyAlphaModeFromTexture(MaterialBuilder mat, string pngPath)
     {
         var mode = ClassifyTextureAlpha(pngPath);
-        if (mode == AlphaMode.MASK) mat.WithAlpha(AlphaMode.MASK, 0.5f);
+        // Low cutoff (0.1) preserves anti-aliased edges on alpha-cutout textures like
+        // foliage and fences. PS2 typically alpha-tested with thresholds well below 0.5.
+        if (mode == AlphaMode.MASK) mat.WithAlpha(AlphaMode.MASK, 0.1f);
         else if (mode == AlphaMode.BLEND) mat.WithAlpha(AlphaMode.BLEND);
         // OPAQUE: leave default
     }
