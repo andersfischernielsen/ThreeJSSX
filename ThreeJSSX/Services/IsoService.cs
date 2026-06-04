@@ -111,19 +111,22 @@ public class IsoService
 
     private void EnsureMdrSectionsExtracted(string levelsDir)
     {
-        // Idempotent backfill: if MDR/ subdirs are missing (e.g. older extraction),
-        // re-run only the MDR extractor against the on-disk SSB files.
+        // Idempotent backfill: re-run the per-level extractor if MDR, Textures, or Lightmaps
+        // subdirs are missing from older extractions.
         var anyLevel = Directory.GetDirectories(levelsDir).FirstOrDefault();
-        if (anyLevel != null && Directory.Exists(Path.Combine(anyLevel, "MDR")))
+        if (anyLevel != null
+            && Directory.Exists(Path.Combine(anyLevel, "MDR"))
+            && Directory.Exists(Path.Combine(anyLevel, "Textures"))
+            && Directory.Exists(Path.Combine(anyLevel, "Lightmaps")))
             return;
 
         var ssbDir = Path.Combine(_extractDir, "BAM", "extracted", "data", "worlds");
         if (!Directory.Exists(ssbDir))
         {
-            _logger.LogWarning("Cannot backfill MDR sections — SSB directory missing at {Path}", ssbDir);
+            _logger.LogWarning("Cannot backfill per-level data — SSB directory missing at {Path}", ssbDir);
             return;
         }
-        _logger.LogInformation("Backfilling raw MDR chunks for existing extraction...");
+        _logger.LogInformation("Backfilling per-level MDR/Textures/Lightmaps for existing extraction...");
         _mdrExtractor.ExtractAll(ssbDir, levelsDir);
     }
 

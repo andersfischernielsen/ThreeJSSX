@@ -58,11 +58,13 @@ public static class PatchTessellator
             {
                 float cFrac = c / (float)subdiv;
 
+                // V flip composed with 90° CW UV rotation = anti-transpose (reflection across
+                // the anti-diagonal). V flip alone fixed the side-by-side swap by reversing the
+                // axis along which PS2 ordered UV corners; the 90° CW rotation undoes the residual
+                // rotation that was already there with the identity mapping.
                 float rawU = Bilinear(u0, u1, u2, u3, rFrac, cFrac);
                 float rawV = Bilinear(v0, v1, v2, v3, rFrac, cFrac);
-                // PS2 stores UV corners 90° rotated vs our (r, c) bilinear convention.
-                // Apply inverse 90° rotation: (u, v) → (v, 1-u).
-                float u = rawV;
+                float u = 1f - rawV;
                 float v = 1f - rawU;
 
                 // compute normal from central differences

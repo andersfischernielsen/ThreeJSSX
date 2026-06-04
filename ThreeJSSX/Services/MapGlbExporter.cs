@@ -33,8 +33,13 @@ public class MapGlbExporter
         var instancesPath = Path.Combine(levelDir, "Instances.json");
         var prefabsPath = Path.Combine(levelDir, "Prefabs.json");
         var bin0Path = Path.Combine(levelDir, "Bin0.json");
-        var texturesSrc = Path.Combine(levelDir, "..", "..", "Textures");
-        var lightmapsSrc = Path.Combine(levelDir, "..", "..", "Lightmaps");
+        // Per-level texture/lightmap dirs (written by MdrExtractor) are preferred to avoid
+        // cross-level RID collisions. Global SSX-Library dirs cover textures shared across
+        // levels that only appear in one CEND block (the per-level dir won't have those).
+        var perLevelTextures = Path.Combine(levelDir, "Textures");
+        var perLevelLightmaps = Path.Combine(levelDir, "Lightmaps");
+        var globalTextures = Path.Combine(levelDir, "..", "..", "Textures");
+        var globalLightmaps = Path.Combine(levelDir, "..", "..", "Lightmaps");
 
         var patchesJson = File.Exists(patchesPath)
             ? PatchesJsonHandler.Load(patchesPath) : new PatchesJsonHandler();
@@ -46,26 +51,12 @@ public class MapGlbExporter
             ? Bin0JsonHandler.Load(bin0Path) : new Bin0JsonHandler();
 
         var texCache = new Dictionary<int, string>();
-        if (Directory.Exists(texturesSrc))
-        {
-            foreach (var texFile in Directory.GetFiles(texturesSrc, "*.png"))
-            {
-                var name = Path.GetFileNameWithoutExtension(texFile);
-                if (int.TryParse(name, out int rid))
-                    texCache[rid] = texFile;
-            }
-        }
+        AddPngsByRid(texCache, perLevelTextures);  // per-level wins for collision-prone shared RIDs
+        AddPngsByRid(texCache, globalTextures);    // global fills in textures not in this CEND
 
         var lightmapCache = new Dictionary<int, string>();
-        if (Directory.Exists(lightmapsSrc))
-        {
-            foreach (var lmFile in Directory.GetFiles(lightmapsSrc, "*.png"))
-            {
-                var name = Path.GetFileNameWithoutExtension(lmFile);
-                if (int.TryParse(name, out int rid))
-                    lightmapCache[rid] = lmFile;
-            }
-        }
+        AddPngsByRid(lightmapCache, perLevelLightmaps);
+        AddPngsByRid(lightmapCache, globalLightmaps);
         var materialCache2 = new Dictionary<(int tex, int lm), MaterialBuilder>();
 
         _logger.LogInformation("  Patches: {Count}", patchesJson.Patches.Count);
@@ -404,6 +395,19 @@ public class MapGlbExporter
         if (mode == AlphaMode.MASK) mat.WithAlpha(AlphaMode.MASK, 0.5f);
         else if (mode == AlphaMode.BLEND) mat.WithAlpha(AlphaMode.BLEND);
         // OPAQUE: leave default
+    }
+
+    // Populate a RID → path cache from a directory of {rid}.png files. First write wins,
+    // so callers should add the higher-priority directory before the fallback.
+    private static void AddPngsByRid(Dictionary<int, string> cache, string dir)
+    {
+        if (!Directory.Exists(dir)) return;
+        foreach (var pngPath in Directory.GetFiles(dir, "*.png"))
+        {
+            var name = Path.GetFileNameWithoutExtension(pngPath);
+            if (int.TryParse(name, out int rid) && !cache.ContainsKey(rid))
+                cache[rid] = pngPath;
+        }
     }
 
     private static bool IsTriggerPrefab(string name)
