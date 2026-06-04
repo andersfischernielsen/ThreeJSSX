@@ -414,7 +414,8 @@ public class MapGlbExporter
             || n.Contains("reset_plane")
             || n.Contains("_collision")
             || n.Contains("collision_")
-            || n.Contains("bcvolume");
+            || n.Contains("bcvolume")
+            || n.Contains("failvolume");
     }
 
     private MeshBuilder<VertexPositionNormal, VertexTexture1>? LoadObjToMesh(

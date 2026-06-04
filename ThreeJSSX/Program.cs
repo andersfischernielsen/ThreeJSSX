@@ -46,6 +46,27 @@ app.MapGet("/api/levels/{name}/glb", async (string name, IsoService iso, MapGlbE
     return Results.Problem("Failed to generate map");
 });
 
+app.MapGet("/api/levels/{name}/halos", async (string name, IsoService iso) =>
+{
+    if (!iso.IsoExists)
+        return Results.Problem($"ISO not found at {iso.IsoPath}");
+
+    await iso.EnsureExtracted();
+
+    var levelDir = Path.Combine(iso.ExtractDir, "Levels", name);
+    if (!Directory.Exists(levelDir))
+        return Results.NotFound($"Level '{name}' not found");
+
+    var halos = HaloParser.ParseLevel(levelDir);
+    var result = halos.Select(h => new
+    {
+        pos = new[] { h.Center.X, h.Center.Y, h.Center.Z },
+        radius = h.Radius,
+        intensity = h.Intensity
+    });
+    return Results.Ok(result);
+});
+
 app.MapPost("/api/levels/extract", async (IsoService iso) =>
 {
     await iso.ForceExtract();

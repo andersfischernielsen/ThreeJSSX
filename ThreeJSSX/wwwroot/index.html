@@ -273,6 +273,83 @@
 
       const loader = new GLTFLoader();
       let currentModel = null;
+      let haloGroup = null;
+
+      function createGlowTexture(r, g, b) {
+        const size = 128;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        const half = size / 2;
+        const gradient = ctx.createRadialGradient(half, half, 0, half, half, half);
+        const alpha = Math.round(255 * r).toString(16).padStart(2, "0");
+        gradient.addColorStop(0, `rgba(${Math.round(255 * r)}, ${Math.round(255 * g)}, ${Math.round(255 * b)}, 1)`);
+        gradient.addColorStop(0.3, `rgba(${Math.round(255 * r)}, ${Math.round(255 * g)}, ${Math.round(255 * b)}, 0.6)`);
+        gradient.addColorStop(0.7, `rgba(${Math.round(255 * r)}, ${Math.round(255 * g)}, ${Math.round(255 * b)}, 0.1)`);
+        gradient.addColorStop(1, `rgba(${Math.round(255 * r)}, ${Math.round(255 * g)}, ${Math.round(255 * b)}, 0)`);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, size, size);
+        return new THREE.CanvasTexture(canvas);
+      }
+
+      let glowMat = null;
+      function getGlowMaterial() {
+        if (!glowMat) {
+          const tex = createGlowTexture(1, 0.9, 0.7);
+          glowMat = new THREE.MeshBasicMaterial({
+            map: tex,
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+            depthWrite: false,
+            depthTest: true,
+            side: THREE.DoubleSide,
+          });
+        }
+        return glowMat;
+      }
+
+      function clearHalos() {
+        if (haloGroup) {
+          haloGroup.traverse(c => {
+            if (c.isMesh) {
+              c.geometry.dispose();
+              c.material.dispose();
+            }
+          });
+          scene.remove(haloGroup);
+          haloGroup = null;
+        }
+      }
+
+      async function loadHalos(name, center) {
+        clearHalos();
+        try {
+          const res = await fetch(`/api/levels/${encodeURIComponent(name)}/halos`);
+          if (!res.ok) return;
+          const halos = await res.json();
+          if (halos.length === 0) return;
+
+          haloGroup = new THREE.Group();
+          haloGroup.name = "halos_" + name;
+          haloGroup.rotation.x = -Math.PI / 2;
+          haloGroup.position.set(-center.x, -center.y, -center.z);
+
+          const mat = getGlowMaterial();
+          const geo = new THREE.SphereGeometry(1, 8, 6);
+
+          for (const h of halos) {
+            const sphereMat = mat.clone();
+            sphereMat.opacity = h.intensity;
+            const sphere = new THREE.Mesh(geo, sphereMat);
+            sphere.position.set(h.pos[0], h.pos[1], h.pos[2]);
+            sphere.scale.setScalar(h.radius * 2);
+            haloGroup.add(sphere);
+          }
+
+          scene.add(haloGroup);
+        } catch {}
+      }
 
       const levelSelect = document.getElementById("level-select");
       levelSelect.addEventListener("change", () =>
@@ -438,6 +515,7 @@
               baseSpeed = Math.max(1500, maxDim / 5);
 
               scene.add(currentModel);
+              loadHalos(name, center);
               document.getElementById("info").textContent =
                 name +
                 ` (${currentModel.children.length} objects, ${maxDim.toFixed(0)} units)`;
