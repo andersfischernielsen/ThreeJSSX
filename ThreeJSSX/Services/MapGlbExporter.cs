@@ -4,6 +4,8 @@ using SharpGLTF.Geometry;
 using SharpGLTF.Geometry.VertexTypes;
 using SharpGLTF.Materials;
 using SharpGLTF.Scenes;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using System.Numerics;
 
 namespace ThreeJSSX.Services;
@@ -184,7 +186,7 @@ public class MapGlbExporter
 
         if (texCache.TryGetValue(texRid, out var texPath))
         {
-            try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); }
+            try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); ApplyAlphaModeFromTexture(mat, texPath); }
             catch { _logger.LogWarning("  Failed to apply texture {Path}", texPath); }
         }
 
@@ -212,7 +214,7 @@ public class MapGlbExporter
             .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(1, 1, 1, 1));
         if (texCache.TryGetValue(texRid, out var texPath))
         {
-            try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); }
+            try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); ApplyAlphaModeFromTexture(mat, texPath); }
             catch { _logger.LogWarning("  Failed to apply texture {Path}", texPath); }
         }
         cache[texRid] = mat;
@@ -313,7 +315,12 @@ public class MapGlbExporter
         var mat = new MaterialBuilder($"{prefabName}_t{texRid}")
             .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(1, 1, 1, 1))
             .WithMetallicRoughness(0f, 1f);
-        try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); return mat; }
+        try
+        {
+            mat.WithChannelImage(KnownChannel.BaseColor, texPath);
+            ApplyAlphaModeFromTexture(mat, texPath);
+            return mat;
+        }
         catch { _logger.LogWarning("  Failed to apply prefab texture {Path}", texPath); return fallback; }
     }
 
@@ -348,6 +355,55 @@ public class MapGlbExporter
         }
         cache[key] = mat;
         return mat;
+    }
+
+    // Classify each PNG once: OPAQUE (alpha always 255), MASK (alpha is binary 0/255),
+    // BLEND (any partial alpha). SSX3 textures are all RGBA — but most are actually opaque,
+    // so the classifier saves us from making everything transparent.
+    private static readonly Dictionary<string, AlphaMode> _alphaCache = new();
+    private static readonly object _alphaCacheLock = new();
+
+    private static AlphaMode ClassifyTextureAlpha(string pngPath)
+    {
+        lock (_alphaCacheLock)
+        {
+            if (_alphaCache.TryGetValue(pngPath, out var cached)) return cached;
+        }
+
+        var mode = AlphaMode.OPAQUE;
+        try
+        {
+            using var img = Image.Load<Rgba32>(pngPath);
+            bool sawZero = false;
+            bool sawPartial = false;
+            img.ProcessPixelRows(accessor =>
+            {
+                for (int y = 0; y < accessor.Height && !sawPartial; y++)
+                {
+                    var row = accessor.GetRowSpan(y);
+                    for (int x = 0; x < row.Length; x++)
+                    {
+                        byte a = row[x].A;
+                        if (a == 0) sawZero = true;
+                        else if (a < 255) { sawPartial = true; break; }
+                    }
+                }
+            });
+            if (sawPartial) mode = AlphaMode.BLEND;
+            else if (sawZero) mode = AlphaMode.MASK;
+        }
+        catch { /* unreadable PNG → leave as OPAQUE */ }
+
+        lock (_alphaCacheLock) { _alphaCache[pngPath] = mode; }
+        return mode;
+    }
+
+    private static void ApplyAlphaModeFromTexture(MaterialBuilder mat, string pngPath)
+    {
+        var mode = ClassifyTextureAlpha(pngPath);
+        if (mode == AlphaMode.MASK) mat.WithAlpha(AlphaMode.MASK, 0.5f);
+        else if (mode == AlphaMode.BLEND) mat.WithAlpha(AlphaMode.BLEND);
+        // OPAQUE: leave default
     }
 
     private static bool IsTriggerPrefab(string name)

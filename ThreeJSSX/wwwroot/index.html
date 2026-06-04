@@ -134,7 +134,9 @@
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x1a1a2e);
+      // Bright sky blue — both fills empty pixels and provides perceptual balance for snow.
+      scene.background = new THREE.Color(0x9fc6f0);
+      scene.fog = new THREE.Fog(0x9fc6f0, 50000, 400000);
 
       const camera = new THREE.PerspectiveCamera(
         60,
@@ -147,8 +149,8 @@
       const renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.toneMapping = THREE.NoToneMapping;
-      renderer.toneMappingExposure = 1.0;
+      renderer.toneMapping = THREE.NeutralToneMapping;
+      renderer.toneMappingExposure = 0.85;
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       document.body.appendChild(renderer.domElement);
 
@@ -254,10 +256,12 @@
 
       // Lightmaps bake the static lighting into the terrain, so we only need
       // gentle fill for the instanced models (trees, signs, rocks).
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-      scene.add(ambientLight);
+      // Cool blue sky from above + warm snow-bounce from below — balances the lightmap's warm bake.
+      const hemiLight = new THREE.HemisphereLight(0xbfdcff, 0xf2e6d0, 0.9);
+      scene.add(hemiLight);
 
-      const dirLight = new THREE.DirectionalLight(0xfff0e0, 0.8);
+      // Subtle warm key light, lower intensity than before since hemi handles most fill.
+      const dirLight = new THREE.DirectionalLight(0xfff5e0, 0.4);
       dirLight.position.set(500, 1000, 500);
       scene.add(dirLight);
 
@@ -368,16 +372,16 @@
                 // Mark and style trigger meshes (Reset_Plane, impactTrigger, *_collision, etc.)
                 if (child.name && child.name.startsWith("__trigger__")) {
                   child.userData.isTrigger = true;
-                  child.renderOrder = 999;
                   const mats = Array.isArray(child.material)
                     ? child.material
                     : [child.material];
                   mats.forEach((m) => {
-                    m.transparent = true;
-                    m.depthWrite = false;
+                    m.wireframe = true;
+                    m.transparent = false;
+                    m.depthWrite = true;
+                    m.opacity = 1;
                     m.side = THREE.DoubleSide;
                     if (m.color) m.color.setRGB(1.0, 0.2, 0.8);
-                    m.opacity = 0.35;
                   });
                   return;
                 }
@@ -394,18 +398,21 @@
                   : [child.material];
                 const newMats = mats.map((m) => {
                   if (m.aoMap) {
-                    // Patch: rebuild as MeshBasicMaterial with lightmap as the only lighting.
+                    // Lightmap data from SSX-Library is linear (raw PS2 framebuffer values),
+                    // not perceptual sRGB. Treat as linear so warm tones don't over-saturate.
                     const tex = m.map;
                     const lm = m.aoMap;
-                    lm.colorSpace = THREE.SRGBColorSpace;
-                    const basic = new THREE.MeshBasicMaterial({
+                    lm.colorSpace = THREE.LinearSRGBColorSpace;
+                    // Lambert respects lightMap AND scene lights (hemisphere/ambient/dir),
+                    // so we get the warm sun bake + cool sky fill stacked correctly.
+                    const lambert = new THREE.MeshLambertMaterial({
                       map: tex,
                       lightMap: lm,
-                      lightMapIntensity: Math.PI, // baseColor × lightmap (1:1, no boost)
+                      lightMapIntensity: 1.6,
                       side: THREE.DoubleSide,
                     });
                     m.dispose();
-                    return basic;
+                    return lambert;
                   } else {
                     m.side = THREE.DoubleSide;
                     return m;

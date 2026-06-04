@@ -1,52 +1,74 @@
 # ThreeJSSX
 
-A .NET + Three.js web app that extracts SSX3 PS2 level data and renders terrain maps in the browser.
+A .NET + Three.js web app that extracts SSX3 PS2 level data and renders the tracks in the browser.
 
-![EBC3 map](docs/ebc3.png)
+![screenshot.png](screenshot.png)
 
-## How it works
+---
 
-1. **Mounts** the SSX3 PS2 ISO and extracts `BAM.BIG` (113MB world archive)
-2. **Parses** 49 track/zone levels using [SSX-Library](https://github.com/GlitcherOG/SSX-Library) (git submodule)
-3. **Tessellates** Bezier terrain patches into smooth triangle meshes with UVs and normals
-4. **Places** instanced 3D models (trees, rocks, buildings) at their world transforms
-5. **Exports** the assembled level as a self-contained `.glb` file
-6. **Renders** the result in the browser via Three.js with orbit controls
+## Implementation
+
+1. Mounts the SSX3 PS2 ISO and extracts `BAM.BIG`
+2. Parses 49 track/zone levels using [SSX-Library](https://github.com/GlitcherOG/SSX-Library)
+3. Tessellates Bezier terrain patches into triangle meshes with UVs, normals, and lightmap atlas UVs
+4. Parses raw MDR chunks to recover per-section material data
+5. Resolves textures sections
+6. Detects and tags triggers
+7. Exports levels as self-contained `.glb`s with terrain patches + instanced models + lightmaps
+8. Renders the result in the browser via Three.js
 
 ## Requirements
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An SSX3 PS2 ISO (NTSC or PAL) — not included
+- .NET 10
+- An SSX3 PS2 ISO
 
-## Setup (clean clone)
+## Setup
 
 ```bash
-# 1. Clone including the SSX-Library submodule
 git clone --recurse-submodules https://github.com/andersfischern/ThreeJSSX.git
 cd ThreeJSSX
 
-# If you already cloned without --recurse-submodules:
-git submodule update --init --recursive
+cp YOUR_SSX_3_PS2_ISO 'ISO/SSX 3.iso'
 
-# 2. Place your SSX3 PS2 ISO here (exact filename matters):
-#    ISO/SSX 3.iso
-
-# 3. Build and run
 cd ThreeJSSX
 dotnet run
 ```
 
-Open `http://localhost:5000` in your browser.
+Then open `http://localhost:5000` in your browser.
 
-**First run:** The app extracts all 49 zones from the ISO automatically when the page loads. This takes ~2 minutes and shows "Extracting level data from ISO…" in the UI. Subsequent runs use the cache and start instantly.
+Note: All 49 zones are extracted from the ISO when the page loads. This takes ~2 minutes. Subsequent runs use the cache.
+Per-level GLBs are generated on first click and cached. Large tracks take 3–6 seconds to generate.
 
-**Per-level GLBs** are generated on first click and cached. Large tracks take 3–6 seconds to generate.
+## Submodule customisation - required
 
-## Re-exporting
+Two internal types from SSX-Library are needed to re-implement the SSB chunk-walking loop and decompress MDR chunks on the consumer side:
 
-### Re-export a single level's GLB
+| Type | Reason |
+|---|---|
+| `SSX_Library.Internal.Refpack` | Decompress RefPack-compressed `CEND` chunks in `.ssb` files |
+| `SSX_Library.Internal.Utilities.StreamUtil` | All the binary reads used during chunk walking (`ReadString`, `ReadUInt32`, `ReadInt24`, …) |
 
-Delete its cached file and click it again in the sidebar:
+Otherwise MDR parsing isn't possible and per-section material data would be lost. Every instance model would therefore fall back to a single guessed texture instead of per-section textures.
+
+The submodule needs to declare an `InternalsVisibleTo` attribute exposing these internals to the `ThreeJSSX` assembly. Make this change to `SSX-Library/SSX-Library/SSX-Library.csproj`:
+
+```xml
+<ItemGroup>
+  <InternalsVisibleTo Include="ThreeJSSX" />
+</ItemGroup>
+```
+
+## Running
+
+### Clean everything and start server
+
+```bash
+pkill -9 -f ThreeJSSX 2>/dev/null; rm -rf "$TMPDIR/ThreeJSSX" ThreeJSSX/wwwroot/maps/glb && cd ThreeJSSX && dotnet run
+```
+
+### Re-export a single GLB
+
+Delete the cached file and click it again in the sidebar:
 
 ```bash
 rm ThreeJSSX/wwwroot/maps/glb/<LevelName>.glb
@@ -74,7 +96,7 @@ If you want to re-parse everything from the ISO (e.g. after updating SSX-Library
 curl -X POST http://localhost:5000/api/levels/extract
 ```
 
-This deletes the extracted data and re-runs the full extraction (~2 min). GLBs are unaffected — delete them separately if needed.
+This deletes the extracted data and re-runs the full extraction (~2 min) including raw MDR chunk dumps. GLBs are unaffected - delete them separately if needed.
 
 ## Project structure
 
@@ -84,12 +106,13 @@ ThreeJSSX/
 │   ├── Program.cs              # Minimal API endpoints
 │   ├── Services/
 │   │   ├── IsoService.cs       # ISO mounting, BIG extraction, SSB parsing
-│   │   ├── PatchTessellator.cs # Bezier 4×4 → smooth triangle mesh
-│   │   └── MapGlbExporter.cs  # Level → GLB assembler (patches + instances + textures)
+│   │   ├── MdrExtractor.cs     # Re-walks SSBs to save raw MDR chunk bytes per prefab
+│   │   ├── PatchTessellator.cs # Bezier 4×4 → smooth triangle mesh + lightmap atlas UVs
+│   │   └── MapGlbExporter.cs   # Level → GLB assembler (patches + instances + per-section textures + lightmaps)
 │   └── wwwroot/
-│       ├── index.html          # Three.js viewer with level picker
-│       └── maps/glb/           # GLB cache (gitignored, auto-generated)
-├── SSX-Library/                # Git submodule — GlitcherOG/SSX-Library
+│       ├── index.html          # Three.js viewer
+│       └── maps/glb/           # GLB cache
+├── SSX-Library/                # Git submodule - GlitcherOG/SSX-Library
 └── ISO/                        # Place SSX 3.iso here (gitignored)
 ```
 
@@ -103,9 +126,11 @@ ThreeJSSX/
 | `DELETE` | `/api/levels/{name}/glb` | Delete cached GLB for a level |
 | `DELETE` | `/api/cache/glb` | Delete all cached GLBs |
 
+The viewer also reads `?map=<LevelName>` from the URL to load a specific level on startup, and writes the current selection back to the URL so it can be bookmarked or shared.
+
 ## Controls
 
-**Orbit mode** (default — for framing the starting view):
+**Orbit mode**:
 
 | Action | Control |
 |--------|---------|
@@ -113,20 +138,13 @@ ThreeJSSX/
 | Zoom | Scroll |
 | Pan | Right-drag |
 
-**Fly mode** (click the **Fly mode** button to engage):
+**Fly mode**:
 
 | Action | Control |
 |--------|---------|
-| Move forward / strafe | W / A / S / D |
-| Look around | Mouse |
-| Move up | Space |
-| Move down | C (or Ctrl) |
-| Sprint (4× speed) | Shift |
+| Forward / strafe | W / A / S / D |
+| Look | Mouse |
+| Up | Space |
+| Down | C (or Ctrl) |
+| Boost (4× speed) | Shift |
 | Return to orbit | Esc |
-
-**Sidebar:**
-
-| Action | Control |
-|--------|---------|
-| Switch level | Click level name |
-| Toggle triggers | Checkbox |
