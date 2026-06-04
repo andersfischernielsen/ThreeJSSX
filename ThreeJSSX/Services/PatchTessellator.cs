@@ -2,7 +2,7 @@ namespace ThreeJSSX.Services;
 
 public static class PatchTessellator
 {
-    public static TessellatedPatch Tessellate(float[,] points, float[,] uvCorners, float[] lightmapAtlas, int subdiv = 10)
+    public static TessellatedPatch Tessellate(float[,] points, float[,] uvCorners, float[] lightmapAtlas, int subdiv = 24)
     {
         var vertices = new List<Vertex>();
         var indices = new List<int>();

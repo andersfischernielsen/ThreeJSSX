@@ -26,7 +26,7 @@ public class MapGlbExporter
 
         var scene = new SceneBuilder();
         var defaultMat = new MaterialBuilder("default")
-            .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(0.7f, 0.7f, 0.7f, 1));
+            .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(1f, 0f, 1f, 1));
         var materialCache = new Dictionary<int, MaterialBuilder>();
 
         var patchesPath = Path.Combine(levelDir, "Patches.json");
@@ -71,7 +71,7 @@ public class MapGlbExporter
         _logger.LogInformation("  Patches: {Count}", patchesJson.Patches.Count);
         foreach (var patch in patchesJson.Patches)
         {
-            var tessellated = PatchTessellator.Tessellate(patch.Points, patch.UVPoints, patch.LightMapPoint, subdiv: 12);
+            var tessellated = PatchTessellator.Tessellate(patch.Points, patch.UVPoints, patch.LightMapPoint, subdiv: 48);
             var mat = GetPatchMaterial(materialCache2, texCache, lightmapCache, patch.TextureRID, patch.LightmapRID, patch.Name);
             var mesh = new MeshBuilder<VertexPositionNormal, VertexTexture2>(patch.Name);
             var prim = mesh.UsePrimitive(mat);
