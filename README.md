@@ -1,6 +1,6 @@
-# ThreeJSSX — ThreeJSSX
+# ThreeJSSX
 
-A dotnet web app that extracts SSX3 PS2 level data and renders terrain maps using Three.js.
+A .NET + Three.js web app that extracts SSX3 PS2 level data and renders terrain maps in the browser.
 
 ![EBC3 map](docs/ebc3.png)
 
@@ -16,55 +16,117 @@ A dotnet web app that extracts SSX3 PS2 level data and renders terrain maps usin
 ## Requirements
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- An SSX3 PS2 ISO placed at `ISO/SSX 3.iso` (not included in this repo)
+- An SSX3 PS2 ISO (NTSC or PAL) — not included
 
-## Quick start
+## Setup (clean clone)
 
 ```bash
-# Clone with submodule
-git clone --recurse-submodules <repo-url>
+# 1. Clone including the SSX-Library submodule
+git clone --recurse-submodules https://github.com/andersfischern/ThreeJSSX.git
 cd ThreeJSSX
 
-# Place your SSX3 PS2 ISO at ISO/SSX 3.iso
+# If you already cloned without --recurse-submodules:
+git submodule update --init --recursive
 
-# Run
+# 2. Place your SSX3 PS2 ISO here (exact filename matters):
+#    ISO/SSX 3.iso
+
+# 3. Build and run
 cd ThreeJSSX
 dotnet run
 ```
 
-Open `http://localhost:5000` (or the URL shown in the console).
+Open `http://localhost:5000` in your browser.
 
-**First run** takes ~2 minutes to extract all 49 zones from the ISO. Subsequent runs use the cache. Each level you click generates its `.glb` (3–6 seconds for large tracks, cached for future visits).
+**First run:** The app extracts all 49 zones from the ISO automatically when the page loads. This takes ~2 minutes and shows "Extracting level data from ISO…" in the UI. Subsequent runs use the cache and start instantly.
+
+**Per-level GLBs** are generated on first click and cached. Large tracks take 3–6 seconds to generate.
+
+## Re-exporting
+
+### Re-export a single level's GLB
+
+Delete its cached file and click it again in the sidebar:
+
+```bash
+rm ThreeJSSX/wwwroot/maps/glb/<LevelName>.glb
+```
+
+Or via the API:
+
+```bash
+curl -X DELETE http://localhost:5000/api/levels/<LevelName>/glb
+```
+
+### Re-export all GLBs
+
+```bash
+curl -X DELETE http://localhost:5000/api/cache/glb
+```
+
+Then click any level in the sidebar to regenerate on demand.
+
+### Re-extract level data from ISO
+
+If you want to re-parse everything from the ISO (e.g. after updating SSX-Library):
+
+```bash
+curl -X POST http://localhost:5000/api/levels/extract
+```
+
+This deletes the extracted data and re-runs the full extraction (~2 min). GLBs are unaffected — delete them separately if needed.
 
 ## Project structure
 
 ```
 ThreeJSSX/
-├── ThreeJSSX/          # ASP.NET Core web app
-│   ├── Program.cs          # Minimal API: /api/levels, /api/levels/{name}/glb
+├── ThreeJSSX/                  # ASP.NET Core web app
+│   ├── Program.cs              # Minimal API endpoints
 │   ├── Services/
-│   │   ├── IsoService.cs         # ISO mounting, BIG extraction, SSB parsing
-│   │   ├── PatchTessellator.cs   # Bezier 4×4 → smooth triangle mesh
-│   │   └── MapGlbExporter.cs     # Level → GLB assembler (patches + instances + textures)
+│   │   ├── IsoService.cs       # ISO mounting, BIG extraction, SSB parsing
+│   │   ├── PatchTessellator.cs # Bezier 4×4 → smooth triangle mesh
+│   │   └── MapGlbExporter.cs  # Level → GLB assembler (patches + instances + textures)
 │   └── wwwroot/
-│       └── index.html            # Three.js viewer with level picker
-├── SSX-Library/            # Git submodule (data parsing library)
-└── ISO/                    # Place SSX 3.iso here (gitignored)
+│       ├── index.html          # Three.js viewer with level picker
+│       └── maps/glb/           # GLB cache (gitignored, auto-generated)
+├── SSX-Library/                # Git submodule — GlitcherOG/SSX-Library
+└── ISO/                        # Place SSX 3.iso here (gitignored)
 ```
 
-## API endpoints
+## API reference
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/levels` | List all 49 extracted zones |
-| `GET /api/levels/{name}/glb` | Generate and serve GLB for a zone |
-| `POST /api/levels/extract` | Force re-extraction from ISO |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/levels` | List all extracted zones (triggers extraction on first call) |
+| `GET` | `/api/levels/{name}/glb` | Serve GLB for a zone (generates and caches on first request) |
+| `POST` | `/api/levels/extract` | Force full re-extraction from ISO |
+| `DELETE` | `/api/levels/{name}/glb` | Delete cached GLB for a level |
+| `DELETE` | `/api/cache/glb` | Delete all cached GLBs |
 
 ## Controls
 
+**Orbit mode** (default — for framing the starting view):
+
 | Action | Control |
 |--------|---------|
-| Rotate | Left-click drag |
-| Zoom | Scroll wheel |
-| Pan | Right-click drag |
-| Switch level | Click level name in sidebar |
+| Rotate | Left-drag |
+| Zoom | Scroll |
+| Pan | Right-drag |
+
+**Fly mode** (click the **Fly mode** button to engage):
+
+| Action | Control |
+|--------|---------|
+| Move forward / strafe | W / A / S / D |
+| Look around | Mouse |
+| Move up | Space |
+| Move down | C (or Ctrl) |
+| Sprint (4× speed) | Shift |
+| Return to orbit | Esc |
+
+**Sidebar:**
+
+| Action | Control |
+|--------|---------|
+| Switch level | Click level name |
+| Toggle triggers | Checkbox |

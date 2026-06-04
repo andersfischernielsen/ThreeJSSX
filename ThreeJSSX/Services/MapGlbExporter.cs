@@ -1,4 +1,5 @@
 using SSXLibrary.JsonFiles.SSX3;
+using SSXLibrary.FileHandlers.LevelFiles.SSX3PS2.SSBData;
 using SharpGLTF.Geometry;
 using SharpGLTF.Geometry.VertexTypes;
 using SharpGLTF.Materials;
@@ -29,7 +30,9 @@ public class MapGlbExporter
         var patchesPath = Path.Combine(levelDir, "Patches.json");
         var instancesPath = Path.Combine(levelDir, "Instances.json");
         var prefabsPath = Path.Combine(levelDir, "Prefabs.json");
+        var bin0Path = Path.Combine(levelDir, "Bin0.json");
         var texturesSrc = Path.Combine(levelDir, "..", "..", "Textures");
+        var lightmapsSrc = Path.Combine(levelDir, "..", "..", "Lightmaps");
 
         var patchesJson = File.Exists(patchesPath)
             ? PatchesJsonHandler.Load(patchesPath) : new PatchesJsonHandler();
@@ -37,6 +40,8 @@ public class MapGlbExporter
             ? InstanceJsonHandler.Load(instancesPath) : new InstanceJsonHandler();
         var mdrJson = File.Exists(prefabsPath)
             ? MDRJsonHandler.Load(prefabsPath) : new MDRJsonHandler();
+        var bin0Json = File.Exists(bin0Path)
+            ? Bin0JsonHandler.Load(bin0Path) : new Bin0JsonHandler();
 
         var texCache = new Dictionary<int, string>();
         if (Directory.Exists(texturesSrc))
@@ -49,12 +54,24 @@ public class MapGlbExporter
             }
         }
 
+        var lightmapCache = new Dictionary<int, string>();
+        if (Directory.Exists(lightmapsSrc))
+        {
+            foreach (var lmFile in Directory.GetFiles(lightmapsSrc, "*.png"))
+            {
+                var name = Path.GetFileNameWithoutExtension(lmFile);
+                if (int.TryParse(name, out int rid))
+                    lightmapCache[rid] = lmFile;
+            }
+        }
+        var materialCache2 = new Dictionary<(int tex, int lm), MaterialBuilder>();
+
         _logger.LogInformation("  Patches: {Count}", patchesJson.Patches.Count);
         foreach (var patch in patchesJson.Patches)
         {
-            var tessellated = PatchTessellator.Tessellate(patch.Points, patch.UVPoints, subdiv: 12);
-            var mat = GetMaterial(materialCache, texCache, patch.TextureRID, patch.Name);
-            var mesh = new MeshBuilder<VertexPositionNormal, VertexTexture1>(patch.Name);
+            var tessellated = PatchTessellator.Tessellate(patch.Points, patch.UVPoints, patch.LightMapPoint, subdiv: 12);
+            var mat = GetPatchMaterial(materialCache2, texCache, lightmapCache, patch.TextureRID, patch.LightmapRID, patch.Name);
+            var mesh = new MeshBuilder<VertexPositionNormal, VertexTexture2>(patch.Name);
             var prim = mesh.UsePrimitive(mat);
 
             for (int i = 0; i < tessellated.Indices.Count; i += 3)
@@ -64,20 +81,63 @@ public class MapGlbExporter
                 var vc = tessellated.Vertices[tessellated.Indices[i + 2]];
 
                 prim.AddTriangle(
-                    (new VertexPositionNormal(new Vector3(va.x, va.y, va.z), new Vector3(va.nx, va.ny, va.nz)), new VertexTexture1(new Vector2(va.u, va.v))),
-                    (new VertexPositionNormal(new Vector3(vb.x, vb.y, vb.z), new Vector3(vb.nx, vb.ny, vb.nz)), new VertexTexture1(new Vector2(vb.u, vb.v))),
-                    (new VertexPositionNormal(new Vector3(vc.x, vc.y, vc.z), new Vector3(vc.nx, vc.ny, vc.nz)), new VertexTexture1(new Vector2(vc.u, vc.v))));
+                    (new VertexPositionNormal(new Vector3(va.x, va.y, va.z), new Vector3(va.nx, va.ny, va.nz)), new VertexTexture2(new Vector2(va.u, va.v), new Vector2(va.lu, va.lv))),
+                    (new VertexPositionNormal(new Vector3(vb.x, vb.y, vb.z), new Vector3(vb.nx, vb.ny, vb.nz)), new VertexTexture2(new Vector2(vb.u, vb.v), new Vector2(vb.lu, vb.lv))),
+                    (new VertexPositionNormal(new Vector3(vc.x, vc.y, vc.z), new Vector3(vc.nx, vc.ny, vc.nz)), new VertexTexture2(new Vector2(vc.u, vc.v), new Vector2(vc.lu, vc.lv))));
             }
             scene.AddRigidMesh(mesh, Matrix4x4.Identity);
         }
 
         _logger.LogInformation("  Instances: {Count}", instancesJson.Instances.Count);
         var modelsDir = Path.Combine(levelDir, "Models");
+        var mdrBinDir = Path.Combine(levelDir, "MDR");
+        var triggerMat = new MaterialBuilder("__trigger__")
+            .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(1, 0.2f, 0.8f, 0.35f))
+            .WithAlpha(AlphaMode.BLEND)
+            .WithDoubleSide(true);
+
+        var prefabMatCache = new Dictionary<(int rid, int track), MaterialBuilder>();
+        // Structured-MDR per-prefab cache. Each entry = list of (sectioned mesh, local transform).
+        // Built once per prefab, then instanced cheaply for each Instance referencing it.
+        var prefabSectionMeshCache = new Dictionary<(int rid, int track),
+            List<(MeshBuilder<VertexPositionNormal, VertexTexture1> mesh, Matrix4x4 localMat)>?>();
+
+        int structuredCount = 0, fallbackCount = 0;
         foreach (var instance in instancesJson.Instances)
         {
             var mdr = mdrJson.mainModelHeaders.FirstOrDefault(m =>
                 m.RID == instance.ModelRID && m.TrackID == instance.ModelTrackID);
             if (mdr.ModelObjects == null) continue;
+
+            var prefabName = mdr.Name ?? "";
+            bool isTrigger = IsTriggerPrefab(prefabName);
+
+            var pos = instance.Position != null && instance.Position.Length >= 3
+                ? new Vector3(instance.Position[0], instance.Position[1], instance.Position[2]) : Vector3.Zero;
+            var rot = instance.Rotation != null && instance.Rotation.Length >= 4
+                ? new Quaternion(instance.Rotation[0], instance.Rotation[1], instance.Rotation[2], instance.Rotation[3]) : Quaternion.Identity;
+            var scl = instance.Scale != null && instance.Scale.Length >= 3
+                ? new Vector3(instance.Scale[0], instance.Scale[1], instance.Scale[2]) : Vector3.One;
+            var instanceMat = Matrix4x4.CreateScale(scl) * Matrix4x4.CreateFromQuaternion(rot) * Matrix4x4.CreateTranslation(pos);
+
+            // Structured path: use raw MDR binary to emit per-section primitives with correct textures.
+            // Triggers always use the trigger material via the OBJ fallback below.
+            if (!isTrigger)
+            {
+                var sectionMeshes = GetPrefabSectionMeshes(prefabSectionMeshCache, mdr, mdrBinDir, bin0Json, texCache, defaultMat);
+                if (sectionMeshes != null && sectionMeshes.Count > 0)
+                {
+                    foreach (var (mesh, localMat) in sectionMeshes)
+                        scene.AddRigidMesh(mesh, localMat * instanceMat);
+                    structuredCount++;
+                    continue;
+                }
+            }
+
+            // OBJ fallback (triggers and any prefabs missing a .bin file)
+            var prefabMat = isTrigger
+                ? triggerMat
+                : ResolvePrefabMaterial(prefabMatCache, mdr, bin0Json, texCache, defaultMat);
 
             foreach (var modelObj in mdr.ModelObjects)
             {
@@ -87,17 +147,10 @@ public class MapGlbExporter
 
                 try
                 {
-                    var m = LoadObjToMesh(objPath, defaultMat);
+                    var m = LoadObjToMesh(objPath, prefabMat, isTrigger ? $"__trigger__{prefabName}" : null);
                     if (m == null) continue;
-
-                    var pos = instance.Position != null && instance.Position.Length >= 3
-                        ? new Vector3(instance.Position[0], instance.Position[1], instance.Position[2]) : Vector3.Zero;
-                    var rot = instance.Rotation != null && instance.Rotation.Length >= 4
-                        ? new Quaternion(instance.Rotation[0], instance.Rotation[1], instance.Rotation[2], instance.Rotation[3]) : Quaternion.Identity;
-                    var scl = instance.Scale != null && instance.Scale.Length >= 3
-                        ? new Vector3(instance.Scale[0], instance.Scale[1], instance.Scale[2]) : Vector3.One;
-
-                    scene.AddRigidMesh(m, Matrix4x4.CreateScale(scl) * Matrix4x4.CreateFromQuaternion(rot) * Matrix4x4.CreateTranslation(pos));
+                    scene.AddRigidMesh(m, instanceMat);
+                    fallbackCount++;
                 }
                 catch (Exception ex)
                 {
@@ -105,6 +158,8 @@ public class MapGlbExporter
                 }
             }
         }
+        _logger.LogInformation("  Instances rendered: {Structured} structured, {Fallback} OBJ-fallback",
+            structuredCount, fallbackCount);
 
         var glbPath = Path.Combine(outputDir, $"{levelName}.glb");
         Directory.CreateDirectory(outputDir);
@@ -112,6 +167,41 @@ public class MapGlbExporter
         model.SaveGLB(glbPath);
         _logger.LogInformation("Saved GLB: {Path}", glbPath);
         return glbPath;
+    }
+
+    private MaterialBuilder GetPatchMaterial(
+        Dictionary<(int, int), MaterialBuilder> cache,
+        Dictionary<int, string> texCache,
+        Dictionary<int, string> lmCache,
+        int texRid, int lmRid, string name)
+    {
+        var key = (texRid, lmRid);
+        if (cache.TryGetValue(key, out var cached)) return cached;
+
+        var mat = new MaterialBuilder($"{name}_t{texRid}_lm{lmRid}")
+            .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(1, 1, 1, 1))
+            .WithMetallicRoughness(0f, 1f);
+
+        if (texCache.TryGetValue(texRid, out var texPath))
+        {
+            try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); }
+            catch { _logger.LogWarning("  Failed to apply texture {Path}", texPath); }
+        }
+
+        if (lmCache.TryGetValue(lmRid, out var lmPath))
+        {
+            try
+            {
+                mat.WithChannelImage(KnownChannel.Occlusion, lmPath);
+                // lightmap atlas UVs are in the second UV set
+                var chan = mat.GetChannel(KnownChannel.Occlusion);
+                if (chan != null) chan.UseTexture().CoordinateSet = 1;
+            }
+            catch { _logger.LogWarning("  Failed to apply lightmap {Path}", lmPath); }
+        }
+
+        cache[key] = mat;
+        return mat;
     }
 
     private MaterialBuilder GetMaterial(Dictionary<int, MaterialBuilder> cache,
@@ -129,10 +219,152 @@ public class MapGlbExporter
         return mat;
     }
 
-    private MeshBuilder<VertexPositionNormal, VertexTexture1>? LoadObjToMesh(
-        string path, MaterialBuilder mat)
+    private List<(MeshBuilder<VertexPositionNormal, VertexTexture1> mesh, Matrix4x4 localMat)>? GetPrefabSectionMeshes(
+        Dictionary<(int rid, int track), List<(MeshBuilder<VertexPositionNormal, VertexTexture1>, Matrix4x4)>?> cache,
+        MDRJsonHandler.MainModelHeader prefab,
+        string mdrBinDir,
+        Bin0JsonHandler bin0Json,
+        Dictionary<int, string> texCache,
+        MaterialBuilder fallback)
     {
-        var name = Path.GetFileNameWithoutExtension(path);
+        var key = (prefab.RID, prefab.TrackID);
+        if (cache.TryGetValue(key, out var cached)) return cached;
+
+        var binPath = Path.Combine(mdrBinDir, $"{prefab.TrackID}-{prefab.RID}.bin");
+        if (!File.Exists(binPath)) { cache[key] = null; return null; }
+
+        WorldMDR worldMdr;
+        try
+        {
+            worldMdr = new WorldMDR();
+            using var stream = File.OpenRead(binPath);
+            worldMdr.LoadData(stream);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("  Failed to parse {Path}: {Msg}", binPath, ex.Message);
+            cache[key] = null;
+            return null;
+        }
+
+        // Per-section material lookup: U12 index → Bin0[binIdx] → texture RID
+        var u12 = prefab.U12 ?? new List<int>();
+        var sectionMats = new MaterialBuilder[Math.Max(1, u12.Count)];
+        for (int i = 0; i < u12.Count; i++)
+            sectionMats[i] = BuildBin0Material(u12[i] >> 8, bin0Json, texCache, prefab.Name ?? "prefab", fallback);
+        if (u12.Count == 0) sectionMats[0] = fallback;
+
+        var result = new List<(MeshBuilder<VertexPositionNormal, VertexTexture1>, Matrix4x4)>();
+        for (int moIdx = 0; moIdx < worldMdr.ModelObjects.Count; moIdx++)
+        {
+            var mo = worldMdr.ModelObjects[moIdx];
+            if (mo.U1Offset == 0 || mo.unknownS2.ModelHeaderOffset == null) continue;
+
+            var localMat = mo.MatrixOffset > 0 ? mo.matrix4X4 : Matrix4x4.Identity;
+
+            for (int hdrIdx = 0; hdrIdx < mo.unknownS2.ModelHeaderOffset.Count; hdrIdx++)
+            {
+                var hdr = mo.unknownS2.ModelHeaderOffset[hdrIdx];
+                int matIdx = hdr.U0;
+                var mat = (matIdx >= 0 && matIdx < sectionMats.Length) ? sectionMats[matIdx] : fallback;
+
+                var mesh = new MeshBuilder<VertexPositionNormal, VertexTexture1>(
+                    $"{prefab.Name ?? "prefab"}_o{moIdx}_s{hdrIdx}");
+                var prim = mesh.UsePrimitive(mat);
+                int triCount = 0;
+
+                // ModelOffsetHeaders alternate (vertex+UV, normal) pairs
+                for (int b = 0; b + 1 < hdr.ModelOffsetHeaders.Count; b += 2)
+                {
+                    var vuv = hdr.ModelOffsetHeaders[b].modelVandUVData;
+                    var norm = hdr.ModelOffsetHeaders[b + 1].modelNormalData;
+                    if (vuv.Vertices == null || norm.Normals == null) continue;
+
+                    var faces = worldMdr.GenerateFaces(vuv, norm);
+                    foreach (var f in faces)
+                    {
+                        // SSX-Library writes (1 - V) when serializing OBJ; replicate here.
+                        var uv1 = new Vector2(f.UV1.X, 1f - f.UV1.Y);
+                        var uv2 = new Vector2(f.UV2.X, 1f - f.UV2.Y);
+                        var uv3 = new Vector2(f.UV3.X, 1f - f.UV3.Y);
+                        prim.AddTriangle(
+                            (new VertexPositionNormal(f.V1, f.Normal1), new VertexTexture1(uv1)),
+                            (new VertexPositionNormal(f.V2, f.Normal2), new VertexTexture1(uv2)),
+                            (new VertexPositionNormal(f.V3, f.Normal3), new VertexTexture1(uv3)));
+                        triCount++;
+                    }
+                }
+
+                if (triCount > 0) result.Add((mesh, localMat));
+            }
+        }
+
+        cache[key] = result;
+        return result;
+    }
+
+    private MaterialBuilder BuildBin0Material(int binIdx, Bin0JsonHandler bin0Json,
+        Dictionary<int, string> texCache, string prefabName, MaterialBuilder fallback)
+    {
+        if (binIdx < 0 || binIdx >= bin0Json.bin0Files.Count) return fallback;
+        int texRid = bin0Json.bin0Files[binIdx].U0;
+        if (!texCache.TryGetValue(texRid, out var texPath)) return fallback;
+
+        var mat = new MaterialBuilder($"{prefabName}_t{texRid}")
+            .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(1, 1, 1, 1))
+            .WithMetallicRoughness(0f, 1f);
+        try { mat.WithChannelImage(KnownChannel.BaseColor, texPath); return mat; }
+        catch { _logger.LogWarning("  Failed to apply prefab texture {Path}", texPath); return fallback; }
+    }
+
+    private MaterialBuilder ResolvePrefabMaterial(
+        Dictionary<(int, int), MaterialBuilder> cache,
+        MDRJsonHandler.MainModelHeader prefab,
+        Bin0JsonHandler bin0Json,
+        Dictionary<int, string> texCache,
+        MaterialBuilder fallback)
+    {
+        var key = (prefab.RID, prefab.TrackID);
+        if (cache.TryGetValue(key, out var cached)) return cached;
+
+        MaterialBuilder mat = fallback;
+        // U12 entries encode (binIdx << 8) | trackId. Use first entry only (Option A).
+        if (prefab.U12 != null && prefab.U12.Count > 0)
+        {
+            int binIdx = prefab.U12[0] >> 8;
+            if (binIdx >= 0 && binIdx < bin0Json.bin0Files.Count)
+            {
+                int texRid = bin0Json.bin0Files[binIdx].U0;
+                if (texCache.TryGetValue(texRid, out var texPath))
+                {
+                    var name = $"{prefab.Name ?? "prefab"}_t{texRid}";
+                    var built = new MaterialBuilder(name)
+                        .WithChannelParam(KnownChannel.BaseColor, KnownProperty.RGBA, new Vector4(1, 1, 1, 1))
+                        .WithMetallicRoughness(0f, 1f);
+                    try { built.WithChannelImage(KnownChannel.BaseColor, texPath); mat = built; }
+                    catch { _logger.LogWarning("  Failed to apply prefab texture {Path}", texPath); }
+                }
+            }
+        }
+        cache[key] = mat;
+        return mat;
+    }
+
+    private static bool IsTriggerPrefab(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        var n = name.ToLowerInvariant();
+        return n.Contains("trigger")
+            || n.Contains("reset_plane")
+            || n.Contains("_collision")
+            || n.Contains("collision_")
+            || n.Contains("bcvolume");
+    }
+
+    private MeshBuilder<VertexPositionNormal, VertexTexture1>? LoadObjToMesh(
+        string path, MaterialBuilder mat, string? nameOverride = null)
+    {
+        var name = nameOverride ?? Path.GetFileNameWithoutExtension(path);
         var mesh = new MeshBuilder<VertexPositionNormal, VertexTexture1>(name);
         var prim = mesh.UsePrimitive(mat);
         var verts = new List<Vector3>();

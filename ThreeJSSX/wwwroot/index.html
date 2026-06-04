@@ -1,197 +1,496 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ThreeJSSX</title>
-<style>
-body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-#info {
-  position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-  background: rgba(0,0,0,0.8); color: white; padding: 12px 24px;
-  border-radius: 8px; z-index: 10; text-align: center;
-  pointer-events: none;
-}
-#sidebar {
-  position: absolute; left: 20px; top: 80px; z-index: 10;
-  background: rgba(0,0,0,0.8); border-radius: 8px; padding: 16px;
-  min-width: 220px; color: white;
-}
-#sidebar h3 { margin: 0 0 12px 0; font-size: 14px; opacity: 0.8; }
-#level-list { list-style: none; padding: 0; margin: 0; }
-#level-list li {
-  padding: 8px 12px; margin: 4px 0; border-radius: 4px;
-  cursor: pointer; font-size: 13px; transition: background 0.2s;
-}
-#level-list li:hover { background: rgba(255,255,255,0.15); }
-#level-list li.active { background: #4a9eff; }
-.loading { opacity: 0.5; pointer-events: none; }
-#controls {
-  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-  z-index: 10; color: rgba(255,255,255,0.6);
-  font-size: 12px; background: rgba(0,0,0,0.5);
-  padding: 6px 14px; border-radius: 4px;
-}
-</style>
-</head>
-<body>
-<div id="info">ThreeJSSX</div>
-<div id="sidebar">
-  <h3>Levels</h3>
-  <ul id="level-list"></ul>
-</div>
-<div id="controls">Drag to rotate &bull; Scroll to zoom &bull; Right-click to pan</div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ThreeJSSX</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+      #info {
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        z-index: 10;
+        text-align: center;
+        pointer-events: none;
+      }
+      #sidebar {
+        position: absolute;
+        left: 20px;
+        top: 80px;
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.8);
+        border-radius: 8px;
+        padding: 16px;
+        min-width: 220px;
+        color: white;
+      }
+      #sidebar h3 {
+        margin: 0 0 12px 0;
+        font-size: 14px;
+        opacity: 0.8;
+      }
+      #level-select {
+        width: 100%;
+        padding: 8px 10px;
+        font-size: 13px;
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #level-select:focus {
+        outline: none;
+        border-color: #4a9eff;
+      }
+      #level-select option {
+        background: #222;
+        color: white;
+      }
+      .loading {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+      #controls {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 12px;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 6px 14px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info">ThreeJSSX</div>
+    <div id="sidebar">
+      <h3>Level</h3>
+      <select id="level-select"></select>
+      <hr style="border-color: rgba(255, 255, 255, 0.15); margin: 12px 0" />
+      <label
+        style="
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 13px;
+          cursor: pointer;
+        "
+      >
+        <input type="checkbox" id="show-triggers" checked />
+        Show triggers (magenta)
+      </label>
+    </div>
+    <div id="controls">
+      Drag to orbit &bull; Scroll to zoom &bull; Right-drag to pan &bull; Click
+      <b>Fly</b> for WASD mode
+    </div>
+    <button
+      id="fly-btn"
+      style="
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        z-index: 20;
+        background: #4a9eff;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+      "
+    >
+      Fly mode
+    </button>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
-  }
-}
-</script>
-
-<script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x1a1a2e);
-
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 10, 1000000);
-camera.position.set(5000, 10000, 5000);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
-document.body.appendChild(renderer.domElement);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0, 0);
-controls.enableDamping = true;
-controls.dampingFactor = 0.1;
-controls.maxDistance = 200000;
-controls.update();
-
-const ambientLight = new THREE.AmbientLight(0x808090, 0.8);
-scene.add(ambientLight);
-
-const dirLight = new THREE.DirectionalLight(0xfff0e0, 1.5);
-dirLight.position.set(500, 1000, 500);
-scene.add(dirLight);
-
-const fillLight = new THREE.DirectionalLight(0x8888cc, 0.4);
-fillLight.position.set(-500, 200, -500);
-scene.add(fillLight);
-
-const gridHelper = new THREE.GridHelper(2000, 40, 0x444466, 0x333355);
-scene.add(gridHelper);
-
-const axesHelper = new THREE.AxesHelper(200);
-scene.add(axesHelper);
-
-const loader = new GLTFLoader();
-let currentModel = null;
-
-const levelList = document.getElementById('level-list');
-
-async function loadLevels() {
-  try {
-    const res = await fetch('/api/levels');
-    const levels = await res.json();
-    levelList.innerHTML = '';
-    levels.forEach(name => {
-      const li = document.createElement('li');
-      li.textContent = name;
-      li.onclick = () => loadLevel(name, li);
-      levelList.appendChild(li);
-    });
-    if (levels.length > 0) {
-      loadLevel(levels[0], levelList.children[0]);
-    }
-  } catch (e) {
-    levelList.innerHTML = '<li style="opacity:0.6">Failed to load levels</li>';
-  }
-}
-
-async function loadLevel(name, listItem) {
-  document.querySelectorAll('#level-list li').forEach(el => el.classList.remove('active'));
-  if (listItem) listItem.classList.add('active');
-  document.getElementById('info').textContent = 'Loading: ' + name + '...';
-
-  if (currentModel) {
-    scene.remove(currentModel);
-    currentModel.traverse(child => {
-      if (child.isMesh) {
-        child.geometry.dispose();
-        if (Array.isArray(child.material)) {
-          child.material.forEach(m => m.dispose());
-        } else {
-          child.material.dispose();
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
         }
       }
-    });
-    currentModel = null;
-  }
+    </script>
 
-  try {
-    const res = await fetch(`/api/levels/${encodeURIComponent(name)}/glb`);
-    if (!res.ok) throw new Error('Failed to load GLB');
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+      import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-    loader.load(url, gltf => {
-      currentModel = gltf.scene;
-      currentModel.rotation.x = -Math.PI / 2;
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x1a1a2e);
 
-      currentModel.traverse(child => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
+      const camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        10,
+        1000000,
+      );
+      camera.position.set(5000, 10000, 5000);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.toneMapping = THREE.NoToneMapping;
+      renderer.toneMappingExposure = 1.0;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      document.body.appendChild(renderer.domElement);
+
+      const orbit = new OrbitControls(camera, renderer.domElement);
+      orbit.enableDamping = true;
+      orbit.dampingFactor = 0.1;
+      orbit.maxDistance = 500000;
+      orbit.target.set(0, 0, 0);
+
+      const fly = new PointerLockControls(camera, renderer.domElement);
+      scene.add(fly.object);
+
+      const flyBtn = document.getElementById("fly-btn");
+      flyBtn.addEventListener("click", () => fly.lock());
+      fly.addEventListener("lock", () => {
+        orbit.enabled = false;
+        flyBtn.style.display = "none";
+      });
+      fly.addEventListener("unlock", () => {
+        // Drop orbit's target ~one screen ahead of the camera so the next drag feels natural
+        camera.getWorldDirection(fwdVec);
+        orbit.target
+          .copy(camera.position)
+          .addScaledVector(fwdVec, baseSpeed * 4);
+        orbit.enabled = true;
+        flyBtn.style.display = "block";
+      });
+
+      const keys = {
+        w: false,
+        a: false,
+        s: false,
+        d: false,
+        up: false,
+        down: false,
+        sprint: false,
+      };
+      let baseSpeed = 1500;
+
+      document.addEventListener("keydown", (e) => {
+        switch (e.code) {
+          case "KeyW":
+            keys.w = true;
+            break;
+          case "KeyA":
+            keys.a = true;
+            break;
+          case "KeyS":
+            keys.s = true;
+            break;
+          case "KeyD":
+            keys.d = true;
+            break;
+          case "Space":
+            keys.up = true;
+            e.preventDefault();
+            break;
+          case "KeyC":
+          case "ControlLeft":
+          case "ControlRight":
+            keys.down = true;
+            break;
+          case "ShiftLeft":
+          case "ShiftRight":
+            keys.sprint = true;
+            break;
+        }
+      });
+      document.addEventListener("keyup", (e) => {
+        switch (e.code) {
+          case "KeyW":
+            keys.w = false;
+            break;
+          case "KeyA":
+            keys.a = false;
+            break;
+          case "KeyS":
+            keys.s = false;
+            break;
+          case "KeyD":
+            keys.d = false;
+            break;
+          case "Space":
+            keys.up = false;
+            break;
+          case "KeyC":
+          case "ControlLeft":
+          case "ControlRight":
+            keys.down = false;
+            break;
+          case "ShiftLeft":
+          case "ShiftRight":
+            keys.sprint = false;
+            break;
         }
       });
 
-      const box = new THREE.Box3().setFromObject(currentModel);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
+      const moveVec = new THREE.Vector3();
+      const fwdVec = new THREE.Vector3();
+      const rightVec = new THREE.Vector3();
+      const worldUp = new THREE.Vector3(0, 1, 0);
+      const clock = new THREE.Clock();
 
-      currentModel.position.sub(center);
+      // Lightmaps bake the static lighting into the terrain, so we only need
+      // gentle fill for the instanced models (trees, signs, rocks).
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambientLight);
 
-      const distance = maxDim * 1.2;
-      camera.position.set(distance, distance * 0.6, 0);
-      camera.lookAt(0, 0, 0);
-      controls.target.set(0, 0, 0);
-      controls.update();
+      const dirLight = new THREE.DirectionalLight(0xfff0e0, 0.8);
+      dirLight.position.set(500, 1000, 500);
+      scene.add(dirLight);
 
-      scene.add(currentModel);
-      document.getElementById('info').textContent = name + ` (${(currentModel.children.length)} objects, ${(maxDim).toFixed(0)} units)`;
-      URL.revokeObjectURL(url);
-    }, undefined, err => {
-      document.getElementById('info').textContent = 'Error: ' + err.message;
-    });
-  } catch (e) {
-    document.getElementById('info').textContent = 'Error: ' + e.message;
-  }
-}
+      const gridHelper = new THREE.GridHelper(2000, 40, 0x444466, 0x333355);
+      scene.add(gridHelper);
 
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
+      const axesHelper = new THREE.AxesHelper(200);
+      scene.add(axesHelper);
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+      const loader = new GLTFLoader();
+      let currentModel = null;
 
-loadLevels();
-animate();
-</script>
-</body>
+      const levelSelect = document.getElementById("level-select");
+      levelSelect.addEventListener("change", () =>
+        loadLevel(levelSelect.value),
+      );
+
+      function setMapInUrl(name) {
+        const url = new URL(window.location);
+        url.searchParams.set("map", name);
+        history.replaceState(null, "", url);
+      }
+
+      async function loadLevels() {
+        levelSelect.innerHTML =
+          "<option>Extracting levels… (first run ~2 min)</option>";
+        levelSelect.disabled = true;
+        document.getElementById("info").textContent =
+          "Extracting level data from ISO (first run ~2 min)…";
+        try {
+          const res = await fetch("/api/levels");
+          if (!res.ok) {
+            const text = await res.text();
+            levelSelect.innerHTML = `<option>${text}</option>`;
+            document.getElementById("info").textContent = "Error: " + text;
+            return;
+          }
+          const levels = await res.json();
+          if (levels.length === 0) {
+            levelSelect.innerHTML =
+              "<option>No levels found — check ISO path</option>";
+            document.getElementById("info").textContent =
+              "No levels found — check server console for ISO path error.";
+            return;
+          }
+          levelSelect.innerHTML = "";
+          levels.forEach((name) => {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            levelSelect.appendChild(opt);
+          });
+          levelSelect.disabled = false;
+
+          const requested = new URLSearchParams(window.location.search).get(
+            "map",
+          );
+          const initial =
+            requested && levels.includes(requested) ? requested : levels[0];
+          levelSelect.value = initial;
+          document.getElementById("info").textContent =
+            `${levels.length} levels loaded`;
+          loadLevel(initial);
+        } catch (e) {
+          levelSelect.innerHTML = `<option>Failed to connect: ${e.message}</option>`;
+          document.getElementById("info").textContent = "Error: " + e.message;
+        }
+      }
+
+      async function loadLevel(name) {
+        setMapInUrl(name);
+        document.getElementById("info").textContent =
+          "Loading: " + name + "...";
+
+        if (currentModel) {
+          scene.remove(currentModel);
+          currentModel.traverse((child) => {
+            if (child.isMesh) {
+              child.geometry.dispose();
+              if (Array.isArray(child.material)) {
+                child.material.forEach((m) => m.dispose());
+              } else {
+                child.material.dispose();
+              }
+            }
+          });
+          currentModel = null;
+        }
+
+        try {
+          const res = await fetch(
+            `/api/levels/${encodeURIComponent(name)}/glb`,
+          );
+          if (!res.ok) throw new Error("Failed to load GLB");
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+
+          loader.load(
+            url,
+            (gltf) => {
+              currentModel = gltf.scene;
+              currentModel.rotation.x = -Math.PI / 2;
+
+              currentModel.traverse((child) => {
+                if (!child.isMesh) return;
+                const geom = child.geometry;
+
+                // Mark and style trigger meshes (Reset_Plane, impactTrigger, *_collision, etc.)
+                if (child.name && child.name.startsWith("__trigger__")) {
+                  child.userData.isTrigger = true;
+                  child.renderOrder = 999;
+                  const mats = Array.isArray(child.material)
+                    ? child.material
+                    : [child.material];
+                  mats.forEach((m) => {
+                    m.transparent = true;
+                    m.depthWrite = false;
+                    m.side = THREE.DoubleSide;
+                    if (m.color) m.color.setRGB(1.0, 0.2, 0.8);
+                    m.opacity = 0.35;
+                  });
+                  return;
+                }
+
+                // glTF stored the lightmap in the occlusion slot with TEXCOORD_1.
+                // GLTFLoader places that texture on aoMap and the second UV set on uv1.
+                // Three.js needs lightMap to read from `uv1` too — alias the attribute.
+                if (geom.attributes.uv1 && !geom.attributes.uv2) {
+                  geom.setAttribute("uv2", geom.attributes.uv1);
+                }
+
+                const mats = Array.isArray(child.material)
+                  ? child.material
+                  : [child.material];
+                const newMats = mats.map((m) => {
+                  if (m.aoMap) {
+                    // Patch: rebuild as MeshBasicMaterial with lightmap as the only lighting.
+                    const tex = m.map;
+                    const lm = m.aoMap;
+                    lm.colorSpace = THREE.SRGBColorSpace;
+                    const basic = new THREE.MeshBasicMaterial({
+                      map: tex,
+                      lightMap: lm,
+                      lightMapIntensity: Math.PI, // baseColor × lightmap (1:1, no boost)
+                      side: THREE.DoubleSide,
+                    });
+                    m.dispose();
+                    return basic;
+                  } else {
+                    m.side = THREE.DoubleSide;
+                    return m;
+                  }
+                });
+                child.material = Array.isArray(child.material)
+                  ? newMats
+                  : newMats[0];
+              });
+
+              const box = new THREE.Box3().setFromObject(currentModel);
+              const center = box.getCenter(new THREE.Vector3());
+              const size = box.getSize(new THREE.Vector3());
+              const maxDim = Math.max(size.x, size.y, size.z);
+
+              currentModel.position.sub(center);
+
+              const distance = maxDim * 0.7;
+              camera.position.set(distance, distance * 0.5, distance);
+              camera.lookAt(0, 0, 0);
+              orbit.target.set(0, 0, 0);
+              orbit.update();
+              baseSpeed = Math.max(1500, maxDim / 5);
+
+              scene.add(currentModel);
+              document.getElementById("info").textContent =
+                name +
+                ` (${currentModel.children.length} objects, ${maxDim.toFixed(0)} units)`;
+              URL.revokeObjectURL(url);
+            },
+            undefined,
+            (err) => {
+              document.getElementById("info").textContent =
+                "Error: " + err.message;
+            },
+          );
+        } catch (e) {
+          document.getElementById("info").textContent = "Error: " + e.message;
+        }
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(clock.getDelta(), 0.1);
+
+        if (fly.isLocked) {
+          const speed = baseSpeed * (keys.sprint ? 4.0 : 1.0) * dt;
+
+          camera.getWorldDirection(fwdVec);
+          rightVec.crossVectors(fwdVec, worldUp).normalize();
+
+          moveVec.set(0, 0, 0);
+          if (keys.w) moveVec.addScaledVector(fwdVec, speed);
+          if (keys.s) moveVec.addScaledVector(fwdVec, -speed);
+          if (keys.d) moveVec.addScaledVector(rightVec, speed);
+          if (keys.a) moveVec.addScaledVector(rightVec, -speed);
+          if (keys.up) moveVec.y += speed;
+          if (keys.down) moveVec.y -= speed;
+
+          camera.position.add(moveVec);
+        } else {
+          orbit.update();
+        }
+
+        renderer.render(scene, camera);
+      }
+
+      document
+        .getElementById("show-triggers")
+        .addEventListener("change", (e) => {
+          const show = e.target.checked;
+          if (!currentModel) return;
+          currentModel.traverse((c) => {
+            if (c.userData && c.userData.isTrigger) c.visible = show;
+          });
+        });
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      loadLevels();
+      animate();
+    </script>
+  </body>
 </html>

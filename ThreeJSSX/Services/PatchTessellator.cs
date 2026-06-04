@@ -2,15 +2,21 @@ namespace ThreeJSSX.Services;
 
 public static class PatchTessellator
 {
-    public static TessellatedPatch Tessellate(float[,] points, float[,] uvCorners, int subdiv = 10)
+    public static TessellatedPatch Tessellate(float[,] points, float[,] uvCorners, float[] lightmapAtlas, int subdiv = 10)
     {
-        var vertices = new List<(float x, float y, float z, float u, float v, float nx, float ny, float nz)>();
+        var vertices = new List<Vertex>();
         var indices = new List<int>();
 
         float u0 = uvCorners[0, 0], u1 = uvCorners[1, 0];
         float u2 = uvCorners[2, 0], u3 = uvCorners[3, 0];
         float v0 = uvCorners[0, 1], v1 = uvCorners[1, 1];
         float v2 = uvCorners[2, 1], v3 = uvCorners[3, 1];
+
+        // LightMapPoint = [u_offset, v_offset, u_size, v_size] in atlas
+        float lmU0 = lightmapAtlas != null && lightmapAtlas.Length >= 4 ? lightmapAtlas[0] : 0;
+        float lmV0 = lightmapAtlas != null && lightmapAtlas.Length >= 4 ? lightmapAtlas[1] : 0;
+        float lmUS = lightmapAtlas != null && lightmapAtlas.Length >= 4 ? lightmapAtlas[2] : 1;
+        float lmVS = lightmapAtlas != null && lightmapAtlas.Length >= 4 ? lightmapAtlas[3] : 1;
 
         int grid = subdiv + 1;
         float[,,] interpPoints = new float[grid, grid, 3];
@@ -52,8 +58,12 @@ public static class PatchTessellator
             {
                 float cFrac = c / (float)subdiv;
 
-                float u = Bilinear(u0, u1, u2, u3, rFrac, cFrac);
-                float v = Bilinear(v0, v1, v2, v3, rFrac, cFrac);
+                float rawU = Bilinear(u0, u1, u2, u3, rFrac, cFrac);
+                float rawV = Bilinear(v0, v1, v2, v3, rFrac, cFrac);
+                // PS2 stores UV corners 90° rotated vs our (r, c) bilinear convention.
+                // Apply inverse 90° rotation: (u, v) → (v, 1-u).
+                float u = rawV;
+                float v = 1f - rawU;
 
                 // compute normal from central differences
                 float x = interpPoints[r, c, 0];
@@ -74,14 +84,19 @@ public static class PatchTessellator
                 float dyr = interpPoints[rp, c, 1] - interpPoints[rm, c, 1];
                 float dzr = interpPoints[rp, c, 2] - interpPoints[rm, c, 2];
 
-                float nx = dyc * dzr - dzc * dyr;
-                float ny = dzc * dxr - dxc * dzr;
-                float nz = dxc * dyr - dyc * dxr;
+                // grad_r × grad_c — points outward (upward in SSX3 Z-up) for 84% of patches
+                float nx = dyr * dzc - dzr * dyc;
+                float ny = dzr * dxc - dxr * dzc;
+                float nz = dxr * dyc - dyr * dxc;
 
                 float len = MathF.Sqrt(nx * nx + ny * ny + nz * nz);
                 if (len > 0.0001f) { nx /= len; ny /= len; nz /= len; }
 
-                vertices.Add((x, y, z, u, v, nx, ny, nz));
+                // lightmap atlas UV — patch occupies a sub-region of a shared atlas
+                float lu = lmU0 + cFrac * lmUS;
+                float lv = lmV0 + rFrac * lmVS;
+
+                vertices.Add(new Vertex(x, y, z, u, v, nx, ny, nz, lu, lv));
             }
         }
 
@@ -94,8 +109,9 @@ public static class PatchTessellator
                 int i2 = (r + 1) * grid + c;
                 int i3 = (r + 1) * grid + (c + 1);
 
-                indices.Add(i0); indices.Add(i1); indices.Add(i2);
-                indices.Add(i1); indices.Add(i3); indices.Add(i2);
+                // CCW winding from +Z (SSX3 up): front faces point upward
+                indices.Add(i0); indices.Add(i2); indices.Add(i1);
+                indices.Add(i1); indices.Add(i2); indices.Add(i3);
             }
         }
 
@@ -106,8 +122,10 @@ public static class PatchTessellator
         => v00 * (1 - r) * (1 - c) + v01 * (1 - r) * c + v10 * r * (1 - c) + v11 * r * c;
 }
 
+public record struct Vertex(float x, float y, float z, float u, float v, float nx, float ny, float nz, float lu, float lv);
+
 public class TessellatedPatch
 {
-    public List<(float x, float y, float z, float u, float v, float nx, float ny, float nz)> Vertices = new();
+    public List<Vertex> Vertices = new();
     public List<int> Indices = new();
 }

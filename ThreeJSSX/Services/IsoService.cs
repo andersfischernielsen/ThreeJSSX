@@ -9,13 +9,15 @@ public class IsoService
     private readonly string _isoPath;
     private readonly string _extractDir;
     private readonly ILogger<IsoService> _logger;
+    private readonly MdrExtractor _mdrExtractor;
 
-    public IsoService(IConfiguration config, ILogger<IsoService> logger)
+    public IsoService(IConfiguration config, ILogger<IsoService> logger, MdrExtractor mdrExtractor)
     {
         var root = config.GetValue<string>("ExtractDir")
             ?? Path.Combine(Path.GetTempPath(), "ThreeJSSX");
         _extractDir = Path.GetFullPath(root);
         _logger = logger;
+        _mdrExtractor = mdrExtractor;
 
         var isoPath = config.GetValue<string>("IsoPath")
             ?? Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "ISO", "SSX 3.iso"));
@@ -39,6 +41,17 @@ public class IsoService
             .ToList();
     }
 
+    public async Task ForceExtract()
+    {
+        var levelsDir = Path.Combine(_extractDir, "Levels");
+        if (Directory.Exists(levelsDir))
+        {
+            _logger.LogInformation("Deleting existing extraction at {Dir}", levelsDir);
+            Directory.Delete(_extractDir, recursive: true);
+        }
+        await EnsureExtracted();
+    }
+
     public async Task EnsureExtracted()
     {
         var bamDir = Path.Combine(_extractDir, "BAM");
@@ -50,6 +63,7 @@ public class IsoService
         {
             _logger.LogInformation("Already extracted, found {Count} levels",
                 Directory.GetDirectories(levelsDir).Length);
+            EnsureMdrSectionsExtracted(levelsDir);
             return;
         }
 
@@ -89,7 +103,28 @@ public class IsoService
             handler.LoadAndExtractSSBFromSBD(ssbPath, _extractDir);
         }
 
+        _logger.LogInformation("Extracting raw MDR chunks for per-section materials...");
+        _mdrExtractor.ExtractAll(ssbDir, levelsDir);
+
         _logger.LogInformation("Extraction complete!");
+    }
+
+    private void EnsureMdrSectionsExtracted(string levelsDir)
+    {
+        // Idempotent backfill: if MDR/ subdirs are missing (e.g. older extraction),
+        // re-run only the MDR extractor against the on-disk SSB files.
+        var anyLevel = Directory.GetDirectories(levelsDir).FirstOrDefault();
+        if (anyLevel != null && Directory.Exists(Path.Combine(anyLevel, "MDR")))
+            return;
+
+        var ssbDir = Path.Combine(_extractDir, "BAM", "extracted", "data", "worlds");
+        if (!Directory.Exists(ssbDir))
+        {
+            _logger.LogWarning("Cannot backfill MDR sections — SSB directory missing at {Path}", ssbDir);
+            return;
+        }
+        _logger.LogInformation("Backfilling raw MDR chunks for existing extraction...");
+        _mdrExtractor.ExtractAll(ssbDir, levelsDir);
     }
 
     private static DiscUtils.DiscDirectoryInfo? FindDir(DiscUtils.DiscDirectoryInfo dir, string name)
