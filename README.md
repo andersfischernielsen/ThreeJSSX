@@ -1,26 +1,15 @@
 # ThreeJSSX
 
-A .NET + Three.js web app that extracts SSX3 PS2 level data and renders the tracks in the browser.
+A .NET + Three.js web app that extracts SSX 3 PS2 level data and renders the tracks in the browser.
 
 ![screenshot.png](screenshot.png)
 
 ---
 
-## Implementation
-
-1. Mounts the SSX3 PS2 ISO and extracts `BAM.BIG`
-2. Parses 49 track/zone levels using [SSX-Library](https://github.com/GlitcherOG/SSX-Library)
-3. Tessellates Bezier terrain patches into triangle meshes with UVs, normals, and lightmap atlas UVs
-4. Parses raw MDR chunks to recover per-section material data
-5. Resolves textures sections
-6. Detects and tags triggers
-7. Exports levels as self-contained `.glb`s with terrain patches + instanced models + lightmaps
-8. Renders the result in the browser via Three.js
-
 ## Requirements
 
 - .NET 10
-- An SSX3 PS2 ISO
+- An SSX 3 PS2 ISO
 
 ## Setup
 
