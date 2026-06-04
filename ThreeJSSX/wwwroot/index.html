@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ThreeJSSX</title>
+<style>
+body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+#info {
+  position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.8); color: white; padding: 12px 24px;
+  border-radius: 8px; z-index: 10; text-align: center;
+  pointer-events: none;
+}
+#sidebar {
+  position: absolute; left: 20px; top: 80px; z-index: 10;
+  background: rgba(0,0,0,0.8); border-radius: 8px; padding: 16px;
+  min-width: 220px; color: white;
+}
+#sidebar h3 { margin: 0 0 12px 0; font-size: 14px; opacity: 0.8; }
+#level-list { list-style: none; padding: 0; margin: 0; }
+#level-list li {
+  padding: 8px 12px; margin: 4px 0; border-radius: 4px;
+  cursor: pointer; font-size: 13px; transition: background 0.2s;
+}
+#level-list li:hover { background: rgba(255,255,255,0.15); }
+#level-list li.active { background: #4a9eff; }
+.loading { opacity: 0.5; pointer-events: none; }
+#controls {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  z-index: 10; color: rgba(255,255,255,0.6);
+  font-size: 12px; background: rgba(0,0,0,0.5);
+  padding: 6px 14px; border-radius: 4px;
+}
+</style>
+</head>
+<body>
+<div id="info">ThreeJSSX</div>
+<div id="sidebar">
+  <h3>Levels</h3>
+  <ul id="level-list"></ul>
+</div>
+<div id="controls">Drag to rotate &bull; Scroll to zoom &bull; Right-click to pan</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 10, 1000000);
+camera.position.set(5000, 10000, 5000);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.1;
+controls.maxDistance = 200000;
+controls.update();
+
+const ambientLight = new THREE.AmbientLight(0x808090, 0.8);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xfff0e0, 1.5);
+dirLight.position.set(500, 1000, 500);
+scene.add(dirLight);
+
+const fillLight = new THREE.DirectionalLight(0x8888cc, 0.4);
+fillLight.position.set(-500, 200, -500);
+scene.add(fillLight);
+
+const gridHelper = new THREE.GridHelper(2000, 40, 0x444466, 0x333355);
+scene.add(gridHelper);
+
+const axesHelper = new THREE.AxesHelper(200);
+scene.add(axesHelper);
+
+const loader = new GLTFLoader();
+let currentModel = null;
+
+const levelList = document.getElementById('level-list');
+
+async function loadLevels() {
+  try {
+    const res = await fetch('/api/levels');
+    const levels = await res.json();
+    levelList.innerHTML = '';
+    levels.forEach(name => {
+      const li = document.createElement('li');
+      li.textContent = name;
+      li.onclick = () => loadLevel(name, li);
+      levelList.appendChild(li);
+    });
+    if (levels.length > 0) {
+      loadLevel(levels[0], levelList.children[0]);
+    }
+  } catch (e) {
+    levelList.innerHTML = '<li style="opacity:0.6">Failed to load levels</li>';
+  }
+}
+
+async function loadLevel(name, listItem) {
+  document.querySelectorAll('#level-list li').forEach(el => el.classList.remove('active'));
+  if (listItem) listItem.classList.add('active');
+  document.getElementById('info').textContent = 'Loading: ' + name + '...';
+
+  if (currentModel) {
+    scene.remove(currentModel);
+    currentModel.traverse(child => {
+      if (child.isMesh) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach(m => m.dispose());
+        } else {
+          child.material.dispose();
+        }
+      }
+    });
+    currentModel = null;
+  }
+
+  try {
+    const res = await fetch(`/api/levels/${encodeURIComponent(name)}/glb`);
+    if (!res.ok) throw new Error('Failed to load GLB');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    loader.load(url, gltf => {
+      currentModel = gltf.scene;
+      currentModel.rotation.x = -Math.PI / 2;
+
+      currentModel.traverse(child => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+
+      const box = new THREE.Box3().setFromObject(currentModel);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+
+      currentModel.position.sub(center);
+
+      const distance = maxDim * 1.2;
+      camera.position.set(distance, distance * 0.6, 0);
+      camera.lookAt(0, 0, 0);
+      controls.target.set(0, 0, 0);
+      controls.update();
+
+      scene.add(currentModel);
+      document.getElementById('info').textContent = name + ` (${(currentModel.children.length)} objects, ${(maxDim).toFixed(0)} units)`;
+      URL.revokeObjectURL(url);
+    }, undefined, err => {
+      document.getElementById('info').textContent = 'Error: ' + err.message;
+    });
+  } catch (e) {
+    document.getElementById('info').textContent = 'Error: ' + e.message;
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+loadLevels();
+animate();
+</script>
+</body>
+</html>
