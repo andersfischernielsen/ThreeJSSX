@@ -1,5 +1,6 @@
 using SSX_Library.Internal;
 using SSX_Library.Internal.Utilities;
+using SSX_Library.Internal.Utilities.StreamExtensions;
 using SSXLibrary.FileHandlers.LevelFiles.SSX3PS2;
 
 namespace ThreeJSSX.Services;
@@ -38,7 +39,7 @@ public class MdrExtractor
 
         while (stream.Position < stream.Length - 1)
         {
-            string magic = StreamUtil.ReadString(stream, 4);
+            string magic = stream.ReadAsciiWithLength(4, false);
             int size = StreamUtil.ReadUInt32(stream);
             byte[] data = StreamUtil.ReadBytes(stream, size - 8);
             byte[] decomp = Refpack.Decompress(data);
